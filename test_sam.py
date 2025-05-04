@@ -54,7 +54,27 @@ class SegmentationDataset(Dataset):
         self.split = split
         self.image_dir = os.path.join(root_dir, split, 'image')
         self.mask_dir = os.path.join(root_dir, split, 'annotation_mask')
-        self.image_files = sorted(os.listdir(self.image_dir))
+        
+        # Get all image files with supported extensions
+        self.image_files = []
+        supported_extensions = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
+        
+        # First get all image files
+        for filename in os.listdir(self.image_dir):
+            if filename.lower().endswith(supported_extensions):
+                # Remove extension to get base name
+                base_name = os.path.splitext(filename)[0]
+                # Check if corresponding mask exists with any supported extension
+                for ext in supported_extensions:
+                    mask_path = os.path.join(self.mask_dir, base_name + ext)
+                    if os.path.exists(mask_path):
+                        self.image_files.append(filename)
+                        break
+        
+        if not self.image_files:
+            raise ValueError(f"No valid image-mask pairs found in {self.image_dir}")
+        
+        logging.info(f"Found {len(self.image_files)} image-mask pairs in {split} set")
         
     def __len__(self):
         return len(self.image_files)
@@ -62,7 +82,21 @@ class SegmentationDataset(Dataset):
     def __getitem__(self, idx):
         img_name = self.image_files[idx]
         img_path = os.path.join(self.image_dir, img_name)
-        mask_path = os.path.join(self.mask_dir, img_name)
+        
+        # Get base name without extension
+        base_name = os.path.splitext(img_name)[0]
+        
+        # Find corresponding mask file with any supported extension
+        mask_path = None
+        supported_extensions = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
+        for ext in supported_extensions:
+            potential_mask_path = os.path.join(self.mask_dir, base_name + ext)
+            if os.path.exists(potential_mask_path):
+                mask_path = potential_mask_path
+                break
+        
+        if mask_path is None:
+            raise ValueError(f"No corresponding mask found for image {img_name}")
         
         # Load original image and mask
         image = Image.open(img_path).convert('RGB')
@@ -173,7 +207,7 @@ def test(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Test trained SAM model')
-    parser.add_argument('--data_root', type=str, default='/hy-tmp/sam/datasets/DRIVE', help='Path to dataset root directory')
+    parser.add_argument('--data_root', type=str, default='/hy-tmp/sam/datasets/CRACK200', help='Path to dataset root directory')
     parser.add_argument('--trained_weights', type=str, default='best_model.pth', help='Path to trained weights')
     parser.add_argument('--output_dir', type=str, default='test_results', help='Directory to save test results')
     

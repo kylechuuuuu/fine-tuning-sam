@@ -15,15 +15,12 @@ from datetime import datetime
 from sklearn.metrics import f1_score
 
 def setup_logging(args):
-    # Create logs directory if it doesn't exist
     if not os.path.exists('logs'):
         os.makedirs('logs')
     
-    # Create a unique log file name with timestamp
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     log_file = f'logs/training_{timestamp}.log'
     
-    # Configure logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
@@ -33,7 +30,6 @@ def setup_logging(args):
         ]
     )
     
-    # Log training configuration
     logging.info("Training Configuration:")
     for arg, value in vars(args).items():
         logging.info(f"{arg}: {value}")
@@ -44,19 +40,15 @@ def count_parameters(model):
     return total_params, trainable_params
 
 def calculate_f1_score(pred_masks, true_masks, threshold=0.5):
-    # Convert to numpy arrays
     pred_masks = pred_masks.detach().cpu().numpy()
     true_masks = true_masks.detach().cpu().numpy()
     
-    # Apply threshold
     pred_masks = (pred_masks > threshold).astype(np.uint8)
     true_masks = (true_masks > threshold).astype(np.uint8)
     
-    # Flatten the arrays
     pred_masks = pred_masks.reshape(-1)
     true_masks = true_masks.reshape(-1)
     
-    # Calculate F1 score
     return f1_score(true_masks, pred_masks)
 
 class SegmentationDataset(Dataset):
@@ -66,7 +58,23 @@ class SegmentationDataset(Dataset):
         self.transform = transform
         self.image_dir = os.path.join(root_dir, split, 'image')
         self.mask_dir = os.path.join(root_dir, split, 'annotation_mask')
-        self.image_files = sorted(os.listdir(self.image_dir))
+        
+        self.image_files = []
+        supported_extensions = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
+        
+        for filename in os.listdir(self.image_dir):
+            if filename.lower().endswith(supported_extensions):
+                base_name = os.path.splitext(filename)[0]
+                for ext in supported_extensions:
+                    mask_path = os.path.join(self.mask_dir, base_name + ext)
+                    if os.path.exists(mask_path):
+                        self.image_files.append(filename)
+                        break
+        
+        if not self.image_files:
+            raise ValueError(f"No valid image-mask pairs found in {self.image_dir}")
+        
+        logging.info(f"Found {len(self.image_files)} image-mask pairs in {split} set")
         
     def __len__(self):
         return len(self.image_files)
@@ -74,8 +82,21 @@ class SegmentationDataset(Dataset):
     def __getitem__(self, idx):
         img_name = self.image_files[idx]
         img_path = os.path.join(self.image_dir, img_name)
-        mask_path = os.path.join(self.mask_dir, img_name)
         
+        base_name = os.path.splitext(img_name)[0]
+        
+        mask_path = None
+        supported_extensions = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
+        for ext in supported_extensions:
+            potential_mask_path = os.path.join(self.mask_dir, base_name + ext)
+            if os.path.exists(potential_mask_path):
+                mask_path = potential_mask_path
+                break
+        
+        if mask_path is None:
+            raise ValueError(f"No corresponding mask found for image {img_name}")
+        
+        # Load images
         image = Image.open(img_path).convert('RGB')
         mask = Image.open(mask_path).convert('L')
         
@@ -86,7 +107,6 @@ class SegmentationDataset(Dataset):
         return image, mask
 
 def train(args):
-    # Setup logging
     setup_logging(args)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -95,16 +115,17 @@ def train(args):
     sam = build_sam_vit_l(checkpoint=args.checkpoint)
     sam.to(device)
     
-    # Count and log parameters
     total_params, trainable_params = count_parameters(sam)
     logging.info(f"Total parameters: {total_params:,}")
     logging.info(f"Trainable parameters: {trainable_params:,}")
     logging.info(f"Trainable parameters percentage: {trainable_params/total_params*100:.2f}%")
     
+    # Freeze image encoder parameters
     for name, param in sam.image_encoder.named_parameters():
         if 'adapter' not in name:
             param.requires_grad = False
     
+    # Freeze prompt encoder parameters
     for param in sam.prompt_encoder.parameters():
         param.requires_grad = False
     
